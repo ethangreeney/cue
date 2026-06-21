@@ -1,118 +1,49 @@
-# needle
+# Cue
 
-**A daily song recommendation with a personal thesis** — chosen from your taste history and explained with enough context to make the song matter.
+**One song a day, chosen for you — and explained.** Cue reads your Spotify listening, picks a single track, and writes the liner notes: a one-line thesis, why it fits *you*, what to listen for, and the story behind it. Not a playlist. Not a feed. One song that matters.
 
-Not a playlist. Not a feed. Needle picks **one** song, grounds it against your real Spotify listening, and writes the liner notes: a one-sentence thesis, why it fits *you*, what to listen for, the story of the song and artist, and the scene around it. Your reaction shapes the next pick.
-
-![one song, chosen for you](https://i.scdn.co)
-
----
+![A Cue recommendation](docs/recommendation.png)
 
 ## How it works
 
-1. **Connect Spotify** — Needle reads your top artists, top tracks, saved songs, and genres to build a compact taste profile.
-2. **Gemini chooses one song** — `gemini-3.5-flash` is prompted with your taste, your past picks (to never repeat), and your feedback (to steer). It returns a single structured recommendation.
-3. **The pick is grounded in reality** — Needle searches Spotify for the exact track, then uses the *real* album art, release year, duration, and link. If a track can't be verified on Spotify, it shows the editorial card with a Spotify search link rather than pretending.
-4. **You react** — Loved it · Nailed it · Too obvious · Too weird · Boring · Not for me. Each verdict is stored and fed into the next prompt, so the recommendations adapt.
+1. **Connect Spotify.** Cue reads your top artists, tracks, saved songs, and recent plays to build a taste profile.
+2. **Gemini picks one song.** It's prompted with your taste — plus what you've already seen and how you've reacted — and returns a single structured recommendation.
+3. **The pick is grounded in reality.** Cue finds the exact track on Spotify and uses the real art, year, duration, and link. If it can't verify the track, it shows the writeup with a search link rather than faking metadata.
+4. **You react.** Loved it · Nailed it · Too obvious · Too weird · Boring · Not for me — or say it in your own words. Your reaction steers the next pick.
 
-The discovery and context layer is the product. Spotify is only the playback/save destination.
+Everything lives in your browser tab. Cue stores nothing server-side, so reloading starts you fresh.
 
----
+![The connect screen](docs/connect.png)
 
 ## Run it locally
 
-### Prerequisites
-- Node.js 20+ (built and tested on Node 26)
-- A Spotify account (the one whose taste you want to use)
+You'll need Node 20+, a Spotify account, and a Google AI Studio key.
 
-### 1. Install
 ```bash
 npm install
-```
-
-### 2. Configure environment
-A working `.env.local` is already present for this machine. To set up fresh, copy the example and fill in values:
-```bash
-cp .env.example .env.local
-```
-
-| Variable | What it is | Where to get it |
-| --- | --- | --- |
-| `GEMINI_API_KEY` | Google AI Studio API key | https://aistudio.google.com/apikey |
-| `GEMINI_MODEL` | Model id (default `gemini-3.5-flash`) | — |
-| `SPOTIFY_CLIENT_ID` | Spotify app client id | https://developer.spotify.com/dashboard |
-| `SPOTIFY_CLIENT_SECRET` | Spotify app client secret | same app, "View client secret" |
-| `SPOTIFY_REDIRECT_URI` | OAuth redirect (must match the app) | `http://127.0.0.1:8888/callback` |
-| `APP_BASE_URL` | Base URL the app runs on | `http://127.0.0.1:8888` |
-
-> **Spotify redirect URI:** the loopback address must be `127.0.0.1`, **not** `localhost` — Spotify rejects `localhost` for new redirect URIs. The registered URI and the running port (8888) must match exactly.
-
-### 3. Run
-```bash
+cp .env.example .env.local   # then fill in the values below
 npm run dev
 ```
-Open **http://127.0.0.1:8888** (use `127.0.0.1`, not `localhost`, so the OAuth redirect matches).
 
-Click **Connect Spotify**, approve access, and Needle generates your first pick.
+Open **http://127.0.0.1:8888** — use `127.0.0.1`, not `localhost`, or Spotify's OAuth redirect won't match.
 
----
+| Variable | What it is |
+| --- | --- |
+| `GEMINI_API_KEY` | Google AI Studio key — https://aistudio.google.com/apikey |
+| `GEMINI_MODEL` | Model id (default `gemini-3.5-flash`) |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | From your Spotify app — https://developer.spotify.com/dashboard |
+| `SPOTIFY_REDIRECT_URI` | `http://127.0.0.1:8888/callback` (must match the app exactly) |
+| `APP_BASE_URL` | `http://127.0.0.1:8888` |
 
-## APIs used
+## Stack
 
-- **Google Gemini** (`generativelanguage.googleapis.com`, model `gemini-3.5-flash`) — generates the one-song recommendation as structured JSON (thesis, reasoning, context, further exploration). Uses Gemini's `responseSchema` for reliable structured output.
-- **Spotify Web API** — Authorization Code flow. Scopes: `user-read-private user-read-email user-top-read user-library-read user-library-modify playlist-read-private playlist-modify-private`. Used to:
-  - read top artists / tracks / saved songs (taste profile),
-  - search for and verify the recommended track (real metadata + art + link),
-  - save a track to your library.
+- **Next.js** on **Cloudflare Workers** (via `@opennextjs/cloudflare`).
+- **Google Gemini** for the recommendation, returned as structured JSON via a response schema.
+- **Spotify Web API** (Authorization Code flow) to read taste, verify the track, and save it to your library.
 
-### Model note
-The target model `gemini-3.5-flash` **is available** on this account and is used as-is — no substitution was needed. If your account lacks it, set `GEMINI_MODEL=gemini-2.5-flash` (the closest Flash model) in `.env.local`.
+## Good to know
 
----
-
-## Architecture
-
-```
-src/
-  app/
-    page.tsx                 # client experience: connect → analyzing → card
-    layout.tsx, globals.css  # editorial type + design system
-    callback/route.ts        # Spotify OAuth callback
-    api/
-      login/    route.ts     # redirect to Spotify authorize
-      me/       route.ts     # session + current pick
-      recommend/route.ts     # generate a new pick
-      feedback/ route.ts     # record reaction → generate next pick
-      save/     route.ts     # save track to Spotify library
-      logout/   route.ts
-  lib/
-    spotify.ts    # OAuth, token refresh, taste fetch, search-grounding, save
-    taste.ts      # builds the taste profile from Spotify data
-    gemini.ts     # structured one-song recommendation + feedback steering
-    recommend.ts  # taste → Gemini → Spotify grounding → persist
-    store.ts      # per-user JSON store (history + feedback)
-    session.ts    # httpOnly cookie session + OAuth state
-  components/
-    RecommendationCard.tsx, icons.tsx
-```
-
-- **Auth/session:** Spotify tokens live in an httpOnly cookie; access tokens auto-refresh.
-- **Persistence:** recommendation history and feedback are stored per user in `data/<spotify_id>.json` (gitignored). This is what lets feedback shape future picks and prevents repeats.
-
----
-
-## What's real vs. mocked
-
-- **Real:** Spotify OAuth, taste analysis from your actual listening, Gemini recommendations, Spotify track grounding (art/links/duration), save-to-library, the feedback loop, and persistence.
-- **Honest limits:**
-  - The Spotify app is in **development mode**, so only accounts added to the app (the owner is included automatically) can connect — fine for personal/local use.
-  - **In-app playback** is intentionally not built; "Play in Spotify" opens the track in Spotify (reliable for free and Premium, no extra device setup).
-  - Spotify deprecated audio-features/recommendations endpoints for new apps, so taste analysis is built from artists/tracks/genres/eras rather than acoustic features.
-  - Spotify retired the legacy `PUT /me/tracks` save endpoint (it now returns 403); Needle saves via the current `PUT /me/library?uris=…` endpoint instead.
-  - Recommendation text comes from an LLM. Needle prompts Gemini to avoid fabricating specific facts, and it grounds the song itself against Spotify — but treat backstory prose as editorial, not citation.
-
----
-
-## Design
-
-Calm, editorial, typographic. Newsreader (serif display) + Inter (labels), warm paper background, hairline rules, generous whitespace. No scores, no infinite feed, no gamification — a single song presented like a private liner note.
+- The Spotify app runs in **development mode**, so only accounts you've added can connect — fine for sharing with a few friends.
+- **Playback isn't built in** — "Play in Spotify" opens the track in Spotify, which works for free and Premium alike.
+- Taste comes from artists, tracks, genres, and eras, since Spotify retired its audio-features and recommendations endpoints for new apps.
+- The writeup is editorial prose from an LLM. The song is grounded against real Spotify data, but treat the backstory as commentary, not citation.
