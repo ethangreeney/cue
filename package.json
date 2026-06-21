@@ -1,0 +1,32 @@
+{
+  "name": "cue",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A daily song recommendation with a personal thesis, chosen from your taste history and explained with enough context to make the song matter.",
+  "scripts": {
+    "dev": "next dev -p 8888",
+    "build": "next build",
+    "start": "next start -p 8888",
+    "lint": "next lint",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare deploy"
+  },
+  "dependencies": {
+    "next": "^15.5.19",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
+    "@types/node": "22.10.7",
+    "@types/react": "19.0.7",
+    "@types/react-dom": "19.0.3",
+    "typescript": "5.7.3",
+    "wrangler": "^4.103.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

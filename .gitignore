@@ -1,0 +1,24 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# cloudflare / opennext build output
+/.open-next/
+/.wrangler/
+worker-configuration.d.ts
+
+# env & secrets
+.env
+.env.local
+.env*.local
+
+# runtime data store
+/data/*.json
+
+# misc
+.DS_Store
+*.log

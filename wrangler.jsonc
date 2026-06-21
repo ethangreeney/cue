@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cue",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-06-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CUE_KV",
+      "id": "fe39eedee47e4e689407d4ada9626bfa"
+    }
+  ],
+  "vars": {
+    "GEMINI_MODEL": "gemini-3.5-flash",
+    "SPOTIFY_REDIRECT_URI": "https://cue.ethan-37d.workers.dev/callback",
+    "APP_BASE_URL": "https://cue.ethan-37d.workers.dev"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
