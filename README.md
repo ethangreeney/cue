@@ -17,15 +17,17 @@ Everything lives in your browser tab. Cue stores nothing server-side, so reloadi
 
 ## Run it locally
 
-You'll need Node 20+, a Spotify account, and a Google AI Studio key.
+You'll need Node 20+ and the [Infisical CLI](https://infisical.com/docs/cli/overview). Secrets live in Infisical — no `.env` to chase down.
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in the values below
-npm run dev
+infisical login   # pick the BidLab org
+npm run dev        # pulls secrets from Infisical and starts on :8888
 ```
 
 Open **http://127.0.0.1:8888** — use `127.0.0.1`, not `localhost`, or Spotify's OAuth redirect won't match.
+
+No Infisical access? Copy `.env.example` to `.env.local`, fill it in, and run `npm run dev:local` instead.
 
 | Variable | What it is |
 | --- | --- |

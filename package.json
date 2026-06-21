@@ -4,7 +4,8 @@
   "private": true,
   "description": "A daily song recommendation with a personal thesis, chosen from your taste history and explained with enough context to make the song matter.",
   "scripts": {
-    "dev": "next dev -p 8888",
+    "dev": "infisical run --env=dev -- next dev -p 8888",
+    "dev:local": "next dev -p 8888",
     "build": "next build",
     "start": "next start -p 8888",
     "lint": "next lint",
