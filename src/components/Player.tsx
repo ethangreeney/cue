@@ -2,18 +2,21 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { PlayIcon, PauseIcon, SpotifyIcon, ArrowIcon } from "./icons";
+import { reportClientIssue } from "@/lib/clientLog";
 
 // The Spotify Web Playback SDK turns this browser tab into a Spotify "device"
 // that can stream full tracks — but ONLY for Premium accounts, and ONLY with the
 // user's own access token client-side (there is no server-proxy alternative).
-// So this component is best-effort: if anything about that contract fails (free
-// account, expired token, SDK won't load, ad-blocker), we fall back silently to
-// a "Play in Spotify" link instead of showing a broken control.
+//
+// A token may have only ONE active SDK device at a time. So we build that device
+// exactly ONCE per page and share it across every song view; mounting a new
+// Player no longer spins up (and races) a second device. A genuine "can't play
+// here" condition (free account, SDK blocked) falls back to a "Play in Spotify"
+// link; a transient hiccup is recoverable — the play button simply retries.
 
 const SDK_SRC = "https://sdk.scdn.co/spotify-player.js";
 
-// The SDK is a single global script + one ready callback. Load it once per page
-// and share the promise across any Player instances that mount.
+// The SDK is a single global script + one ready callback. Load it once per page.
 let sdkPromise: Promise<void> | null = null;
 function loadSdk(): Promise<void> {
   if (typeof window === "undefined") return Promise.reject(new Error("no_window"));
@@ -40,21 +43,240 @@ interface TokenInfo {
   isPremium: boolean;
 }
 
-async function fetchToken(): Promise<TokenInfo | null> {
+// One cached token, refreshed a little ahead of expiry so the SDK and the play
+// call never run with a dead token.
+let token: TokenInfo | null = null;
+async function freshToken(): Promise<TokenInfo | null> {
+  if (token && Date.now() < token.expiresAt - 30_000) return token;
   try {
     const res = await fetch("/api/token");
-    if (!res.ok) return null;
+    if (!res.ok) return token;
     const d = (await res.json()) as {
       authenticated?: boolean;
       accessToken?: string;
       expiresAt?: number;
       isPremium?: boolean;
     };
-    if (!d.authenticated || !d.accessToken) return null;
-    return { accessToken: d.accessToken, expiresAt: d.expiresAt ?? 0, isPremium: !!d.isPremium };
+    token =
+      d.authenticated && d.accessToken
+        ? { accessToken: d.accessToken, expiresAt: d.expiresAt ?? 0, isPremium: !!d.isPremium }
+        : null;
   } catch {
+    // Network blip — keep whatever we had rather than dropping to fallback.
+  }
+  return token;
+}
+
+// Surface a playback problem to the server log (so we can diagnose a tester's
+// failure directly without them copying anything), tagged with a human-readable
+// hint about the likely cause. Best-effort; never carries the access token.
+function reportPlaybackIssue(kind: string, message: string) {
+  const hint =
+    kind === "account_error"
+      ? "Token missing the 'streaming' scope (authorized before it was added) or account can't stream — reconnect Spotify."
+      : kind === "not_premium"
+        ? "Spotify Premium is required for in-page playback."
+        : kind === "authentication_error"
+          ? "Access token rejected — reconnect Spotify."
+          : kind === "initialization_error"
+            ? "Browser couldn't initialize playback (DRM/EME unavailable or blocked)."
+            : kind === "sdk_load_failed"
+              ? "Web Playback SDK script failed to load (network or ad-blocker)."
+              : "";
+  reportClientIssue("player", kind, message, hint ? { hint } : undefined);
+}
+
+// Minimal shape of the bits of the SDK we touch.
+interface SdkPlayer {
+  connect: () => Promise<boolean>;
+  disconnect: () => void;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
+  seek: (positionMs: number) => Promise<void>;
+  addListener: (event: string, cb: (payload: unknown) => void) => void;
+}
+
+// ── Shared playback state, broadcast to every mounted Player ────────────────
+interface SharedState {
+  uri: string | null; // the track currently loaded on the device
+  positionMs: number;
+  paused: boolean;
+  ts: number; // performance.now() at the moment this sample was taken
+}
+let lastState: SharedState = { uri: null, positionMs: 0, paused: true, ts: 0 };
+
+const subscribers = new Set<() => void>();
+function notify() {
+  subscribers.forEach((fn) => fn());
+}
+
+interface Shared {
+  player: SdkPlayer;
+  deviceId: string | null;
+}
+let shared: Shared | null = null;
+let sharedPromise: Promise<Shared | null> | null = null;
+// Latched when the SDK reports a non-recoverable condition for this token — a
+// missing "streaming" scope (the user authorized before it was added), a non-
+// streamable account, or a DRM/init failure. Retrying can't fix any of these;
+// in-page playback stays off until the user reconnects (which reloads the page),
+// so we degrade straight to the "Play in Spotify" link.
+let playbackBlocked = false;
+// A subset of the blocked conditions that a fresh login actually fixes: a token
+// missing the "streaming" scope or one Spotify rejected. For these we offer a
+// one-click "Reconnect Spotify" instead of a dead-end link-out (a free account
+// or a DRM failure, by contrast, can't be fixed by reconnecting).
+let needsReconnect = false;
+
+async function connectAndWait(player: SdkPlayer): Promise<boolean> {
+  let connected = false;
+  try {
+    connected = await player.connect();
+  } catch {
+    connected = false;
+  }
+  if (!connected) return false;
+  const deadline = Date.now() + 8000;
+  while (!shared?.deviceId && !playbackBlocked && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !!shared?.deviceId;
+}
+
+async function buildPlayer(): Promise<Shared | null> {
+  try {
+    await loadSdk();
+  } catch {
+    reportPlaybackIssue("sdk_load_failed", "");
     return null;
   }
+  const w = window as unknown as { Spotify: { Player: new (opts: unknown) => SdkPlayer } };
+  const player = new w.Spotify.Player({
+    name: "Cue",
+    getOAuthToken: async (cb: (t: string) => void) => {
+      const t = await freshToken();
+      cb(t?.accessToken ?? "");
+    },
+    volume: 0.85
+  });
+  const s: Shared = { player, deviceId: null };
+  shared = s;
+
+  player.addListener("ready", (payload) => {
+    s.deviceId = (payload as { device_id: string }).device_id;
+  });
+  player.addListener("not_ready", () => {
+    // The device went offline (e.g. playback transferred to a phone). Drop the
+    // id; the next play attempt reconnects THIS player rather than building a
+    // second one (two devices on one token is the collision we're avoiding).
+    s.deviceId = null;
+  });
+  player.addListener("player_state_changed", (payload) => {
+    const st = payload as
+      | { position: number; paused: boolean; track_window?: { current_track?: { uri?: string } } }
+      | null;
+    if (!st) return;
+    lastState = {
+      uri: st.track_window?.current_track?.uri ?? lastState.uri,
+      positionMs: st.position,
+      paused: st.paused,
+      ts: performance.now()
+    };
+    notify();
+  });
+  const fail = (kind: string) => (payload: unknown) => {
+    // initialization / authentication / account errors are non-recoverable for
+    // this token — latch the blocked flag so we degrade to the link-out, and
+    // log it so a tester's failure is diagnosable from the logs, not guesswork.
+    playbackBlocked = true;
+    if (kind === "account_error" || kind === "authentication_error") needsReconnect = true;
+    shared = null;
+    sharedPromise = null;
+    const message = (payload as { message?: string } | null)?.message ?? "";
+    reportPlaybackIssue(kind, message);
+  };
+  player.addListener("initialization_error", fail("initialization_error"));
+  player.addListener("authentication_error", fail("authentication_error"));
+  player.addListener("account_error", fail("account_error"));
+
+  const ready = await connectAndWait(player);
+  if (!ready) {
+    shared = null;
+    return null;
+  }
+  return s;
+}
+
+// "fallback" → in-page play can't work for this user/token (link out);
+// "retry" → a transient miss the user can simply click again.
+type EnsureResult = { ok: true; deviceId: string } | { ok: false; reason: "fallback" | "retry" };
+
+// Resolve a ready device, reusing the shared one whenever possible.
+async function ensureDevice(): Promise<EnsureResult> {
+  if (shared?.deviceId) return { ok: true, deviceId: shared.deviceId };
+  if (playbackBlocked) return { ok: false, reason: "fallback" };
+
+  const t = await freshToken();
+  if (!t) return { ok: false, reason: "retry" };
+  if (!t.isPremium) {
+    reportPlaybackIssue("not_premium", "account product is not premium");
+    return { ok: false, reason: "fallback" };
+  }
+
+  // Player exists but its device dropped — reconnect the same instance.
+  if (shared?.player) {
+    const ready = await connectAndWait(shared.player);
+    if (ready && shared?.deviceId) return { ok: true, deviceId: shared.deviceId };
+    return { ok: false, reason: playbackBlocked ? "fallback" : "retry" };
+  }
+
+  if (!sharedPromise) sharedPromise = buildPlayer();
+  const result = await sharedPromise;
+  if (!result || !result.deviceId) {
+    sharedPromise = null; // let a future click rebuild
+    return { ok: false, reason: playbackBlocked ? "fallback" : "retry" };
+  }
+  return { ok: true, deviceId: result.deviceId };
+}
+
+async function startPlayback(uri: string, deviceId: string): Promise<boolean> {
+  const t = await freshToken();
+  if (!t) return false;
+  try {
+    const res = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${t.accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ uris: [uri] })
+    });
+    if (res.ok || res.status === 204) return true;
+    reportPlaybackIssue("play_request_failed", `HTTP ${res.status}`);
+    return false;
+  } catch (e) {
+    reportPlaybackIssue("play_request_error", e instanceof Error ? e.message : "");
+    return false;
+  }
+}
+
+function pausePlayback() {
+  shared?.player.pause().catch(() => {});
+}
+function resumePlayback() {
+  shared?.player.resume().catch(() => {});
+}
+function seekTo(ms: number) {
+  shared?.player.seek(Math.max(0, Math.round(ms))).catch(() => {});
+}
+
+// Seek only when `uri` is the track currently loaded on the shared device — used
+// by the lyrics view to jump to a line. Returns whether the seek was issued, so
+// the caller can ignore clicks when this song isn't the active in-page stream.
+export function seekActive(uri: string | null, ms: number): boolean {
+  if (!uri || lastState.uri !== uri || !shared?.deviceId) return false;
+  seekTo(ms);
+  return true;
 }
 
 function fmt(ms: number): string {
@@ -64,18 +286,9 @@ function fmt(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// "connecting" is the brief window between the first play click and the device
-// being ready; "fallback" means in-page playback isn't possible — link out.
+// "connecting" is the brief window between the play click and the device being
+// ready; "fallback" means in-page playback is genuinely impossible — link out.
 type Status = "idle" | "connecting" | "playing" | "paused" | "fallback";
-
-// Minimal shape of the bits of the SDK we touch.
-interface SdkPlayer {
-  connect: () => Promise<boolean>;
-  disconnect: () => void;
-  pause: () => Promise<void>;
-  resume: () => Promise<void>;
-  addListener: (event: string, cb: (payload: unknown) => void) => void;
-}
 
 export default function Player({
   uri,
@@ -90,91 +303,36 @@ export default function Player({
 }) {
   const [status, setStatus] = useState<Status>("idle");
   const [posMs, setPosMs] = useState(0);
+  const [softError, setSoftError] = useState(false);
 
-  const playerRef = useRef<SdkPlayer | null>(null);
-  const deviceIdRef = useRef<string | null>(null);
-  const tokenRef = useRef<TokenInfo | null>(null);
-  // Base sample for local position interpolation between SDK state events, so
-  // the progress bar and lyric sync advance smoothly rather than in 1s jumps.
-  const baseRef = useRef<{ pos: number; t: number; paused: boolean }>({ pos: 0, t: 0, paused: true });
-
-  // Keep the latest onProgress in a ref so the ticking interval never goes stale
-  // and we don't re-create it on every parent render.
   const reportRef = useRef(onProgress);
   reportRef.current = onProgress;
 
-  // Build + connect the SDK player on first play. Resolves to whether a device
-  // is ready to receive playback.
-  const ensurePlayer = useCallback(async (): Promise<boolean> => {
-    if (playerRef.current && deviceIdRef.current) return true;
+  // Seek/scrub state. While dragging we drive the bar visually and only commit
+  // the seek on release, so we don't spam the SDK on every pointer move.
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
 
-    const token = await fetchToken();
-    if (!token || !token.isPremium) {
-      setStatus("fallback");
-      return false;
-    }
-    tokenRef.current = token;
-
-    try {
-      await loadSdk();
-    } catch {
-      setStatus("fallback");
-      return false;
-    }
-
-    const w = window as unknown as {
-      Spotify: { Player: new (opts: unknown) => SdkPlayer };
+  // Reflect the shared device's state, but only when THIS track is the one
+  // loaded on it. Other song views stay idle.
+  useEffect(() => {
+    const update = () => {
+      setStatus((prev) => {
+        const mine = !!lastState.uri && lastState.uri === uri;
+        if (mine) return lastState.paused ? "paused" : "playing";
+        if (prev === "connecting" || prev === "fallback") return prev; // don't clobber
+        if (prev === "playing" || prev === "paused") return "idle"; // we were evicted
+        return prev;
+      });
+      if (lastState.uri === uri) setPosMs(lastState.positionMs);
     };
-    const player = new w.Spotify.Player({
-      name: "Cue",
-      getOAuthToken: async (cb: (t: string) => void) => {
-        let t = tokenRef.current;
-        // Refresh slightly ahead of expiry so the SDK never streams with a
-        // dead token mid-song.
-        if (!t || Date.now() > t.expiresAt - 30_000) {
-          const fresh = await fetchToken();
-          if (fresh) {
-            tokenRef.current = fresh;
-            t = fresh;
-          }
-        }
-        cb(t?.accessToken ?? token.accessToken);
-      },
-      volume: 0.85
-    });
-
-    player.addListener("ready", (payload) => {
-      deviceIdRef.current = (payload as { device_id: string }).device_id;
-    });
-    player.addListener("not_ready", () => {
-      deviceIdRef.current = null;
-    });
-    player.addListener("player_state_changed", (payload) => {
-      const state = payload as { position: number; paused: boolean } | null;
-      if (!state) return;
-      baseRef.current = { pos: state.position, t: performance.now(), paused: state.paused };
-      setPosMs(state.position);
-      setStatus(state.paused ? "paused" : "playing");
-    });
-    const fail = () => setStatus("fallback");
-    player.addListener("initialization_error", fail);
-    player.addListener("authentication_error", fail);
-    player.addListener("account_error", fail);
-
-    playerRef.current = player;
-    const connected = await player.connect();
-    if (!connected) {
-      setStatus("fallback");
-      return false;
-    }
-
-    // Wait briefly for the "ready" event to hand us a device id.
-    const deadline = Date.now() + 8000;
-    while (!deviceIdRef.current && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    return !!deviceIdRef.current;
-  }, []);
+    subscribers.add(update);
+    update();
+    return () => {
+      subscribers.delete(update);
+    };
+  }, [uri]);
 
   const handleToggle = useCallback(async () => {
     if (!uri) {
@@ -182,60 +340,141 @@ export default function Player({
       return;
     }
     if (status === "playing") {
-      await playerRef.current?.pause();
+      pausePlayback();
       return;
     }
-    if (status === "paused") {
-      await playerRef.current?.resume();
+    if (status === "paused" && lastState.uri === uri) {
+      resumePlayback();
       return;
     }
-    // First play: connect, then start this track on our device.
+    // First play, or a retry after a failure.
+    setSoftError(false);
     setStatus("connecting");
-    const ready = await ensurePlayer();
-    if (!ready) return; // ensurePlayer already flipped us to "fallback"
-    try {
-      const res = await fetch(
-        `https://api.spotify.com/v1/me/player/play?device_id=${deviceIdRef.current}`,
-        {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${tokenRef.current!.accessToken}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ uris: [uri] })
-        }
-      );
-      if (!res.ok && res.status !== 204) setStatus("fallback");
-    } catch {
-      setStatus("fallback");
+    const device = await ensureDevice();
+    if (!device.ok) {
+      if (device.reason === "fallback") setStatus("fallback");
+      else {
+        setStatus("idle");
+        setSoftError(true);
+      }
+      return;
     }
-  }, [uri, status, fallbackUrl, ensurePlayer]);
+    const ok = await startPlayback(uri, device.deviceId);
+    if (!ok) {
+      setStatus(playbackBlocked ? "fallback" : "idle");
+      if (!playbackBlocked) setSoftError(true);
+    }
+    // success → player_state_changed flips us to "playing"
+  }, [uri, status, fallbackUrl]);
 
-  // Smoothly advance position between SDK state events and report upward.
+  // Smoothly advance position between SDK state events and report upward. While
+  // the user is dragging the scrubber, leave posMs alone so the thumb tracks the
+  // finger rather than fighting it.
   useEffect(() => {
     if (status !== "playing" && status !== "paused") return;
     const id = window.setInterval(() => {
-      const b = baseRef.current;
-      let pos = b.paused ? b.pos : b.pos + (performance.now() - b.t);
+      if (lastState.uri !== uri || draggingRef.current) return;
+      let pos = lastState.paused ? lastState.positionMs : lastState.positionMs + (performance.now() - lastState.ts);
       if (durationMs) pos = Math.min(pos, durationMs);
       setPosMs(pos);
-      reportRef.current?.(pos / 1000, !b.paused);
+      reportRef.current?.(pos / 1000, !lastState.paused);
     }, 250);
     return () => window.clearInterval(id);
-  }, [status, durationMs]);
+  }, [status, uri, durationMs]);
 
-  // Release the device when the song view closes.
+  // ── Scrubbing ─────────────────────────────────────────────────────────────
+  // Only seekable once a track is actually loaded on the device and we know its
+  // length. Computes the target from the pointer's x within the bar.
+  const seekable = (status === "playing" || status === "paused") && !!durationMs;
+
+  const msFromClientX = useCallback(
+    (clientX: number): number | null => {
+      const el = barRef.current;
+      if (!el || !durationMs) return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0) return null;
+      const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      return frac * durationMs;
+    },
+    [durationMs]
+  );
+
+  const onScrubDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!seekable) return;
+      const ms = msFromClientX(e.clientX);
+      if (ms == null) return;
+      draggingRef.current = true;
+      setDragging(true);
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      setPosMs(ms);
+    },
+    [seekable, msFromClientX]
+  );
+
+  const onScrubMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      const ms = msFromClientX(e.clientX);
+      if (ms != null) setPosMs(ms);
+    },
+    [msFromClientX]
+  );
+
+  const onScrubUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      setDragging(false);
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      const ms = msFromClientX(e.clientX);
+      if (ms != null) {
+        setPosMs(ms);
+        seekTo(ms);
+      }
+    },
+    [msFromClientX]
+  );
+
+  // Arrow keys nudge ±5s for keyboard/a11y users.
+  const onScrubKey = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!seekable || !durationMs) return;
+      const delta = e.key === "ArrowRight" ? 5000 : e.key === "ArrowLeft" ? -5000 : 0;
+      if (!delta) return;
+      e.preventDefault();
+      const next = Math.min(durationMs, Math.max(0, posMs + delta));
+      setPosMs(next);
+      seekTo(next);
+    },
+    [seekable, durationMs, posMs]
+  );
+
+  // Leaving this song stops its audio, but keeps the shared device alive so the
+  // next song reuses it instead of reconnecting.
   useEffect(() => {
     return () => {
-      try {
-        playerRef.current?.disconnect();
-      } catch {
-        /* noop */
-      }
+      if (lastState.uri === uri && !lastState.paused) pausePlayback();
     };
-  }, []);
+  }, [uri]);
 
   if (status === "fallback") {
+    // A stale token (missing the streaming scope, or rejected) is fixed by a
+    // fresh login — offer that directly. /api/login forces re-consent and
+    // returns here, so one click re-enables in-page playback.
+    if (needsReconnect) {
+      return (
+        <a className="player player-fallback" href="/api/login">
+          <span className="player-toggle" aria-hidden="true">
+            <SpotifyIcon size={18} />
+          </span>
+          <span className="player-fallback-label">
+            Reconnect Spotify to play here
+            <ArrowIcon size={14} className="arrow" />
+          </span>
+        </a>
+      );
+    }
     return (
       <a className="player player-fallback" href={fallbackUrl} target="_blank" rel="noreferrer">
         <span className="player-toggle" aria-hidden="true">
@@ -259,7 +498,7 @@ export default function Player({
         className="player-toggle"
         onClick={handleToggle}
         disabled={connecting}
-        aria-label={playing ? "Pause" : "Play"}
+        aria-label={softError ? "Retry" : playing ? "Pause" : "Play"}
       >
         {connecting ? (
           <span className="player-spin" aria-hidden="true" />
@@ -270,11 +509,32 @@ export default function Player({
         )}
       </button>
       <div className="player-track">
-        <div className="player-bar">
+        <div
+          ref={barRef}
+          className={`player-bar ${seekable ? "seekable" : ""} ${dragging ? "dragging" : ""}`}
+          onPointerDown={onScrubDown}
+          onPointerMove={onScrubMove}
+          onPointerUp={onScrubUp}
+          onPointerCancel={onScrubUp}
+          onKeyDown={onScrubKey}
+          role={seekable ? "slider" : undefined}
+          tabIndex={seekable ? 0 : undefined}
+          aria-label={seekable ? "Seek" : undefined}
+          aria-valuemin={seekable ? 0 : undefined}
+          aria-valuemax={seekable && durationMs ? Math.round(durationMs / 1000) : undefined}
+          aria-valuenow={seekable ? Math.round(posMs / 1000) : undefined}
+        >
           <span style={{ width: `${pct}%` }} />
+          {seekable && <i className="player-thumb" style={{ left: `${pct}%` }} aria-hidden="true" />}
         </div>
         <div className="player-time">
-          <span>{fmt(posMs)}</span>
+          {softError ? (
+            <span className="player-hint" role="status">
+              Couldn’t start — tap to retry
+            </span>
+          ) : (
+            <span>{fmt(posMs)}</span>
+          )}
           <span>{durationMs ? fmt(durationMs) : "--:--"}</span>
         </div>
       </div>

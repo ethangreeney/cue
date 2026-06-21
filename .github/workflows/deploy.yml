@@ -1,0 +1,31 @@
+name: Deploy to Cloudflare
+
+# Push to master = deploy. No one needs Cloudflare or Infisical access — the
+# only credential is a scoped Workers token stored in repo secrets. Production
+# runtime secrets (Spotify, Gemini) already live in Cloudflare, so the build
+# never sees them.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-master
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # cf:deploy does NOT rebuild, so build first, then ship the output.
+      - run: npm run cf:build
+      - run: npm run cf:deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

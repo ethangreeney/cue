@@ -1381,7 +1381,7 @@ a {
 /* The detail view is its own single screen, like the daily picks. The three
    columns share a vertical midline so nothing is top-anchored and stranded. */
 .story-page {
-  max-width: 1340px;
+  max-width: 1500px;
   min-height: 100svh;
   display: flex;
   flex-direction: column;
@@ -1393,10 +1393,17 @@ a {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) clamp(228px, 22vw, 290px) minmax(0, 1fr);
-  gap: clamp(30px, 3.6vw, 60px);
+  /* Center column is height-driven so the album art grows to match the prose
+     and lyrics columns on tall displays, keeping the three a balanced band. */
+  grid-template-columns: minmax(0, 380px) clamp(340px, 56vh, 540px) minmax(0, 380px);
+  gap: clamp(36px, 3.4vw, 64px);
+  /* Cap the side columns and center the band so the prose sits inset from the
+     left edge rather than hugging it — that inset roughly matches the trailing
+     space the short, left-aligned lyric lines leave on the right, so the outer
+     frame reads even while the photo stays dead-center. */
+  justify-content: center;
   align-items: center;
-  padding: clamp(10px, 2.5vh, 36px) 0;
+  padding: clamp(8px, 2vh, 24px) 0;
 }
 
 .story-text {
@@ -1434,7 +1441,7 @@ a {
 .story-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px;
+  gap: 18px;
   border-bottom: 1px solid var(--rule);
   margin-bottom: 18px;
 }
@@ -1578,17 +1585,63 @@ a {
 }
 
 .player-bar {
+  position: relative;
   height: 3px;
   border-radius: 2px;
   background: var(--rule);
-  overflow: hidden;
 }
 
 .player-bar span {
   display: block;
   height: 100%;
+  border-radius: 2px;
   background: var(--ink);
   transition: width 0.25s linear;
+}
+
+/* When a track is loaded the bar is a scrubber: enlarge the hit target with a
+   transparent overlay (so the visual 3px track is untouched), show a draggable
+   thumb, and drop transitions mid-drag so the thumb tracks the finger exactly. */
+.player-bar.seekable {
+  cursor: pointer;
+}
+
+.player-bar.seekable::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -9px;
+  bottom: -9px;
+}
+
+.player-bar.seekable:focus-visible {
+  outline: none;
+}
+
+.player-thumb {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-radius: 50%;
+  background: var(--ink);
+  transform: translateY(-50%);
+  transition: left 0.25s linear;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.player-bar.seekable:hover .player-thumb,
+.player-bar.seekable:focus-visible .player-thumb,
+.player-bar.dragging .player-thumb {
+  opacity: 1;
+}
+
+.player-bar.dragging span,
+.player-bar.dragging .player-thumb {
+  transition: none;
 }
 
 .player-time {
@@ -1599,6 +1652,11 @@ a {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--muted-strong);
+}
+
+.player-hint {
+  color: var(--accent);
+  letter-spacing: 0.02em;
 }
 
 /* Fallback: a single calm link-out for free accounts / unsupported browsers. */
@@ -1634,12 +1692,13 @@ a {
   display: flex;
 }
 
+
 .lyrics {
   position: relative; /* be the offsetParent for lines, so auto-scroll centering is measured against the box itself */
   flex: 1;
-  /* Bound the lyric window so it reads as a centered block the same visual
-     mass as the cover + player, rather than stretching the full row. */
-  max-height: clamp(360px, 54vh, 500px);
+  /* Bound the lyric window so it reads as a centered block of similar visual
+     mass to the prose, rather than stretching the full row. */
+  max-height: clamp(440px, 60vh, 600px);
   overflow-y: auto;
   padding: 8px 2px;
   /* Fade the top and bottom edges so lines drift in and out rather than clip. */
@@ -1678,18 +1737,32 @@ a {
 }
 
 .lyric-line {
+  display: block;
   margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  width: 100%;
   font-family: var(--serif);
   font-size: 19px;
   line-height: 1.32;
   letter-spacing: -0.01em;
   color: var(--muted);
+  cursor: pointer;
   transition: color 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Clicking a line jumps the track to it (when this song is the active stream);
+   a faint lift on hover signals it's tappable without shouting. */
+.lyric-line:hover {
+  color: var(--ink-soft);
+  opacity: 1;
 }
 
 .lyric-line.past {
   color: var(--muted);
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .lyric-line.active {

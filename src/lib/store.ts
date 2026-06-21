@@ -27,6 +27,18 @@ function kv(): KVNamespace {
 
 const memKey = (userId: string) => `mem:${userId}`;
 const picksKey = (userId: string, dateKey: string) => `picks:${userId}:${dateKey}`;
+const lyricsKey = (sig: string) => `lyrics:${sig}`;
+
+// Lyrics for a given track never change, and the day's picks are shared across
+// every listener — so one KV cache turns "everyone re-hits lrclib" into "the
+// first viewer pays, the rest are instant".
+export async function getCachedLyrics(sig: string): Promise<unknown | null> {
+  return (await kv().get(lyricsKey(sig), "json")) as unknown | null;
+}
+
+export async function setCachedLyrics(sig: string, value: unknown): Promise<void> {
+  await kv().put(lyricsKey(sig), JSON.stringify(value), { expirationTtl: 60 * 60 * 24 * 30 });
+}
 
 export function freshMemory(displayName: string): UserMemory {
   return { displayName, taste: null, tasteUpdatedAt: 0, history: [], feedback: [] };

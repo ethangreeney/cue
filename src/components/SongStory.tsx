@@ -125,6 +125,7 @@ export default function SongStory({ rec }: { rec: Recommendation }) {
 
       <div className="story-lyrics-col">
         <Lyrics
+          uri={sp?.uri ?? null}
           title={rec.title}
           artist={rec.artist}
           album={rec.album}

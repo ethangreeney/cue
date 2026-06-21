@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { seekActive } from "./Player";
 
 interface SyncedLine {
   time: number; // seconds
@@ -15,7 +16,17 @@ interface LyricsData {
 
 type State = "loading" | "synced" | "plain" | "none" | "instrumental";
 
+// The one place the lyrics request is shaped — so the daily-page prefetch and
+// this component hit the exact same URL and share the browser cache entry.
+export function lyricsQuery(title: string, artist: string, album?: string, durationMs?: number): string {
+  const params = new URLSearchParams({ title, artist });
+  if (album) params.set("album", album);
+  if (durationMs) params.set("duration", String(Math.round(durationMs / 1000)));
+  return params.toString();
+}
+
 export default function Lyrics({
+  uri,
   title,
   artist,
   album,
@@ -23,6 +34,7 @@ export default function Lyrics({
   positionSec,
   playing
 }: {
+  uri?: string | null;
   title: string;
   artist: string;
   album?: string;
@@ -34,17 +46,13 @@ export default function Lyrics({
   const [state, setState] = useState<State>("loading");
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const activeRef = useRef<HTMLParagraphElement | null>(null);
+  const activeRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setState("loading");
     setData(null);
-    const params = new URLSearchParams({ title, artist });
-    if (album) params.set("album", album);
-    if (durationMs) params.set("duration", String(Math.round(durationMs / 1000)));
-
-    fetch(`/api/lyrics?${params.toString()}`)
+    fetch(`/api/lyrics?${lyricsQuery(title, artist, album, durationMs)}`)
       .then((r) => r.json() as Promise<LyricsData>)
       .then((d) => {
         if (cancelled) return;
@@ -126,15 +134,17 @@ export default function Lyrics({
         const isActive = i === activeIdx;
         const isPast = i < activeIdx;
         return (
-          <p
+          <button
             key={i}
+            type="button"
             ref={isActive ? activeRef : null}
             className={`lyric-line${isActive ? " active" : ""}${isPast ? " past" : ""}${
               playing ? "" : " paused"
             }`}
+            onClick={() => seekActive(uri ?? null, line.time * 1000)}
           >
             {line.text || " "}
-          </p>
+          </button>
         );
       })}
     </div>

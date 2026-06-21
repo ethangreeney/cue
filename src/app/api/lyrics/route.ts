@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCachedLyrics, setCachedLyrics } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,11 @@ async function lrclibSearch(track: string, artist: string): Promise<LrclibTrack 
   return list.find((t) => t.syncedLyrics) ?? list[0];
 }
 
+// Lyrics never change for a track, so the response is safe to cache hard — both
+// at our KV layer (shared across listeners) and in the browser.
+const CACHE_HEADERS = { "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" };
+const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const title = (sp.get("title") || "").trim();
@@ -75,6 +81,12 @@ export async function GET(req: NextRequest) {
   if (!title || !artist) {
     return NextResponse.json({ error: "title and artist required" }, { status: 400 });
   }
+
+  // Signature is the same inputs the client sends, normalized — so two listeners
+  // opening the same pick share one cache entry.
+  const sig = [title, artist, album, duration].map(norm).join("|");
+  const cached = await getCachedLyrics(sig).catch(() => null);
+  if (cached) return NextResponse.json(cached, { headers: CACHE_HEADERS });
 
   try {
     // Exact match first (most accurate, returns the best synced version)…
@@ -88,16 +100,19 @@ export async function GET(req: NextRequest) {
       track = (await lrclibSearch(title, artist).catch(() => null)) ?? track;
     }
 
-    if (!track || track.instrumental) {
-      return NextResponse.json({ synced: [], plain: null, instrumental: !!track?.instrumental });
-    }
+    const payload =
+      !track || track.instrumental
+        ? { synced: [], plain: null, instrumental: !!track?.instrumental }
+        : {
+            synced: track.syncedLyrics ? parseLrc(track.syncedLyrics) : [],
+            plain: track.plainLyrics ?? null,
+            instrumental: false
+          };
 
-    const synced = track.syncedLyrics ? parseLrc(track.syncedLyrics) : [];
-    return NextResponse.json({
-      synced,
-      plain: track.plainLyrics ?? null,
-      instrumental: false
-    });
+    // A resolved lookup (hit OR a genuine "no lyrics") is cacheable. Only a
+    // thrown upstream error skips the cache, so a blip isn't frozen in as "none".
+    await setCachedLyrics(sig, payload).catch(() => {});
+    return NextResponse.json(payload, { headers: CACHE_HEADERS });
   } catch {
     // Treat any upstream failure as "no lyrics" — never block the player on it.
     return NextResponse.json({ synced: [], plain: null, instrumental: false });

@@ -5,6 +5,8 @@ import SongStory from "@/components/SongStory";
 import Podium from "@/components/Podium";
 import { SpotifyIcon } from "@/components/icons";
 import { FeedbackRecord, Recommendation } from "@/lib/types";
+import { installGlobalErrorLogging } from "@/lib/clientLog";
+import { lyricsQuery } from "@/components/Lyrics";
 
 type Phase = "loading" | "connect" | "generating" | "ready";
 
@@ -96,8 +98,20 @@ export default function Home() {
   useEffect(() => {
     if (bootedRef.current) return;
     bootedRef.current = true;
+    installGlobalErrorLogging();
     void initialise();
   }, [initialise]);
+
+  // Warm lyrics for the day's picks the moment they land, so opening a song
+  // shows synced lyrics instantly instead of waiting on lrclib at click time.
+  useEffect(() => {
+    if (phase !== "ready" || !recommendations.length) return;
+    for (const rec of recommendations) {
+      void fetch(`/api/lyrics?${lyricsQuery(rec.title, rec.artist, rec.album, rec.spotify?.durationMs)}`).catch(
+        () => {}
+      );
+    }
+  }, [phase, recommendations]);
 
   // Tick the countdown, and when midnight rolls past while the tab is open,
   // pull the fresh day's picks.
