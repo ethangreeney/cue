@@ -1395,7 +1395,7 @@ a {
   display: grid;
   /* Center column is height-driven so the album art grows to match the prose
      and lyrics columns on tall displays, keeping the three a balanced band. */
-  grid-template-columns: minmax(0, 380px) clamp(340px, 56vh, 540px) minmax(0, 380px);
+  grid-template-columns: minmax(0, 380px) clamp(320px, 52vh, 500px) minmax(0, 380px);
   gap: clamp(36px, 3.4vw, 64px);
   /* Cap the side columns and center the band so the prose sits inset from the
      left edge rather than hugging it — that inset roughly matches the trailing
@@ -1701,48 +1701,13 @@ a {
   flex: 1;
   /* Bound the lyric window so it reads as a centered block of similar visual
      mass to the prose, rather than stretching the full row. */
-  max-height: clamp(340px, 48vh, 480px);
+  max-height: clamp(360px, 56vh, 540px);
   overflow-y: auto;
   padding: 8px 2px;
   /* Fade the top and bottom edges so lines drift in and out rather than clip. */
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16%, #000 84%, transparent);
   mask-image: linear-gradient(to bottom, transparent, #000 16%, #000 84%, transparent);
   scrollbar-width: none;
-}
-
-.metadata-visualizer {
-  height: 60px;
-  box-sizing: border-box;
-  padding: 9px 0 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-}
-
-.visualizer-bars {
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-}
-
-.visualizer-bars i {
-  flex: 1;
-  min-width: 1px;
-  border-radius: 1px 1px 0 0;
-  background: var(--muted-strong);
-  opacity: 0;
-  transition: height 80ms linear, opacity 260ms ease;
-}
-
-.metadata-visualizer.playing .visualizer-bars i {
-  opacity: 0.82;
-}
-
-.story-audio-extras {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  transform: translateY(20px);
 }
 
 .playback-volume {
@@ -1852,7 +1817,7 @@ a {
   text-align: left;
   width: 100%;
   font-family: var(--serif);
-  font-size: 19px;
+  font-size: 17px;
   line-height: 1.32;
   letter-spacing: -0.01em;
   color: var(--muted);
