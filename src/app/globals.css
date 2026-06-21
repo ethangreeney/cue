@@ -783,4 +783,16 @@ a {
   .save-link {
     margin-left: 0;
   }
+  /* Let the feedback bar breathe: reactions fill their own row and wrap,
+     then the note toggle and Next sit on the line below. */
+  .feedback-bar {
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .fb-options {
+    flex-basis: 100%;
+  }
+  .skip-btn {
+    margin-left: auto;
+  }
 }
