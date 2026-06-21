@@ -1,12 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cue",
-  "main": ".open-next/worker.js",
+  "main": "worker.ts",
   "compatibility_date": "2026-06-17",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "binding": "ASSETS",
     "directory": ".open-next/assets"
+  },
+  "triggers": {
+    // NZ midnight (NZST = UTC+12). Pre-generates each listener's daily picks.
+    "crons": ["0 12 * * *"]
   },
   "kv_namespaces": [
     {

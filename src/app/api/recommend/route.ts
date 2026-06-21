@@ -17,7 +17,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as SessionMemory;
     memory = {
-      history: Array.isArray(body.history) ? body.history.slice(-14) : [],
+      // Full exclusion set — a song recommended once is never shown again.
+      // Bounded only to keep the request payload sane.
+      history: Array.isArray(body.history) ? body.history.slice(-2000) : [],
       // Bound the free-text note before it reaches the prompt.
       feedback: Array.isArray(body.feedback)
         ? body.feedback.slice(-8).map((f) => ({

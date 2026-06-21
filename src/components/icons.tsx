@@ -54,6 +54,13 @@ export const PlayIcon = ({ size = 22, className }: P) => (
   </svg>
 );
 
+export const PauseIcon = ({ size = 22, className }: P) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <rect x="6" y="5" width="4" height="14" rx="1" />
+    <rect x="14" y="5" width="4" height="14" rx="1" />
+  </svg>
+);
+
 export const ArrowIcon = ({ size = 18, className }: P) => (
   <svg {...base(size)} className={className}>
     <path d="M5 12h14M13 6l6 6-6 6" />

@@ -12,7 +12,9 @@ export const SCOPES = [
   "user-library-modify",
   "user-read-recently-played",
   "playlist-read-private",
-  "playlist-modify-private"
+  "playlist-modify-private",
+  // In-browser playback via the Web Playback SDK (Premium accounts only).
+  "streaming"
 ].join(" ");
 
 function clientId(): string {
@@ -76,6 +78,29 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResponse
   return (await res.json()) as TokenResponse;
 }
 
+// App-level token via the client-credentials flow. It can't read a user's
+// library, but it CAN search the catalogue — enough to ground a recommendation
+// against a real track when no user is present (e.g. the midnight cron).
+let appToken: { token: string; expiresAt: number } | null = null;
+export async function getAppToken(): Promise<string> {
+  if (appToken && Date.now() < appToken.expiresAt - 60_000) return appToken.token;
+  const res = await fetch(`${ACCOUNTS}/api/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth()}`,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({ grant_type: "client_credentials" }),
+    cache: "no-store"
+  });
+  if (!res.ok) {
+    throw new Error(`Spotify app token failed: ${res.status} ${await res.text()}`);
+  }
+  const data = (await res.json()) as { access_token: string; expires_in: number };
+  appToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return appToken.token;
+}
+
 async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
   const res = await fetch(`${ACCOUNTS}/api/token`, {
     method: "POST",
@@ -130,6 +155,7 @@ export interface SpotifyProfile {
   id: string;
   display_name: string | null;
   email?: string;
+  product?: string; // "premium" | "free" | "open" — gates in-browser playback
 }
 
 export async function getProfile(token: string): Promise<SpotifyProfile> {

@@ -12,9 +12,7 @@ function apiKey(): string {
 }
 
 // Gemini structured-output schema for one recommendation.
-const RESPONSE_SCHEMA = {
-  type: "OBJECT",
-  properties: {
+const RECOMMENDATION_PROPERTIES = {
     title: { type: "STRING", description: "Exact song title." },
     artist: { type: "STRING", description: "Primary artist name." },
     album: { type: "STRING", description: "Album the song appears on." },
@@ -48,37 +46,43 @@ const RESPONSE_SCHEMA = {
       type: "STRING",
       description: "A clean search string to find the exact track on Spotify."
     }
+};
+
+const RECOMMENDATION_FIELDS = [
+  "title",
+  "artist",
+  "album",
+  "year",
+  "genres",
+  "thesis",
+  "whyForYou",
+  "whatToListenFor",
+  "aboutSong",
+  "aboutArtist",
+  "context",
+  "furtherExploration",
+  "spotifySearchQuery"
+];
+
+const RECOMMENDATION_ITEM = {
+  type: "OBJECT",
+  properties: RECOMMENDATION_PROPERTIES,
+  required: RECOMMENDATION_FIELDS,
+  propertyOrdering: RECOMMENDATION_FIELDS
+};
+
+// Single pick — used by the on-demand /api/recommend path.
+const RESPONSE_SCHEMA = RECOMMENDATION_ITEM;
+
+// A whole day's worth at once — one round-trip that returns several DISTINCT
+// picks. Far cheaper and more diverse than firing N near-identical prompts in
+// parallel (which collapse onto the same canonical songs).
+const BATCH_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    recommendations: { type: "ARRAY", items: RECOMMENDATION_ITEM }
   },
-  required: [
-    "title",
-    "artist",
-    "album",
-    "year",
-    "genres",
-    "thesis",
-    "whyForYou",
-    "whatToListenFor",
-    "aboutSong",
-    "aboutArtist",
-    "context",
-    "furtherExploration",
-    "spotifySearchQuery"
-  ],
-  propertyOrdering: [
-    "title",
-    "artist",
-    "album",
-    "year",
-    "genres",
-    "thesis",
-    "whyForYou",
-    "whatToListenFor",
-    "aboutSong",
-    "aboutArtist",
-    "context",
-    "furtherExploration",
-    "spotifySearchQuery"
-  ]
+  required: ["recommendations"]
 };
 
 function steeringFromFeedback(feedback: FeedbackRecord[]): string {
@@ -159,6 +163,37 @@ Rules:
 Return ONLY the structured JSON object.`;
 }
 
+function buildBatchPrompt(
+  taste: TasteProfile,
+  history: { title: string; artist: string }[],
+  feedback: FeedbackRecord[],
+  count: number
+): string {
+  const single = buildPrompt(taste, history, feedback);
+  // Reuse the whole single-pick brief (listener, feedback, exclusions, rules)
+  // and just swap the task for "give me several DISTINCT picks at once".
+  const task = `# YOUR TASK
+Choose exactly ${count} real, existing songs to recommend right now — a set, not one.
+
+The set MUST be internally diverse:
+- Every pick a DIFFERENT artist. Never the same artist twice.
+- Span different corners of this listener's taste (different moods, eras, or genres they actually like) — not ${count} variations on one sound.
+- None of them may appear in the ALREADY RECOMMENDED list above.`;
+
+  const body = single.slice(0, single.indexOf("# YOUR TASK")) + task;
+  return `${body}
+
+Rules:
+- Each MUST be a real song actually streamable on Spotify right now. Use the exact artist and title as they appear on Spotify. Do not invent songs, and avoid tracks likely to be missing from Spotify (out-of-print, unofficial, region-locked, obscure-label rarities).
+- Genuinely good, well-matched picks — not the most obvious mainstream hits, but not willfully obscure either, unless feedback says otherwise.
+- Each "whyForYou" must reference SPECIFIC things about this listener's taste, not vague flattery.
+- Do not invent biographical or factual claims you are unsure of.
+- No numeric scores. No "as an AI" language. No emoji. No exclamation-mark hype.
+- Keep every field tight and editorial. Prose, not bullet points.
+
+Return ONLY the structured JSON object with a "recommendations" array of exactly ${count} items.`;
+}
+
 interface GeminiResponse {
   candidates?: {
     content?: { parts?: { text?: string }[] };
@@ -167,16 +202,14 @@ interface GeminiResponse {
   promptFeedback?: unknown;
 }
 
-export async function generateRecommendationDraft(
-  taste: TasteProfile,
-  history: { title: string; artist: string }[],
-  feedback: FeedbackRecord[]
-): Promise<RecommendationDraft> {
-  const prompt = buildPrompt(taste, history, feedback);
-
-  const res = await fetch(
-    `${ENDPOINT}/${model()}:generateContent?key=${encodeURIComponent(apiKey())}`,
-    {
+// One Gemini round-trip with a hard wall-clock timeout, so a hung call fails
+// fast instead of stalling the whole generation (and blowing the route limit).
+async function callGemini(prompt: string, schema: object, timeoutMs = 60_000): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${ENDPOINT}/${model()}:generateContent?key=${encodeURIComponent(apiKey())}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -184,28 +217,56 @@ export async function generateRecommendationDraft(
         generationConfig: {
           temperature: 1.0,
           responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA
+          responseSchema: schema
         }
       }),
-      cache: "no-store"
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Gemini timed out after ${timeoutMs}ms`);
     }
-  );
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!res.ok) {
     throw new Error(`Gemini request failed: ${res.status} ${await res.text()}`);
   }
-
   const data = (await res.json()) as GeminiResponse;
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
-  if (!text) {
-    throw new Error("Gemini returned an empty response.");
-  }
+  if (!text) throw new Error("Gemini returned an empty response.");
+  return text;
+}
 
-  let parsed: RecommendationDraft;
+export async function generateRecommendationDraft(
+  taste: TasteProfile,
+  history: { title: string; artist: string }[],
+  feedback: FeedbackRecord[]
+): Promise<RecommendationDraft> {
+  const text = await callGemini(buildPrompt(taste, history, feedback), RESPONSE_SCHEMA);
   try {
-    parsed = JSON.parse(text) as RecommendationDraft;
+    return JSON.parse(text) as RecommendationDraft;
   } catch {
     throw new Error(`Gemini returned non-JSON: ${text.slice(0, 300)}`);
   }
-  return parsed;
+}
+
+// Several distinct picks in a single call — the workhorse for the daily podium.
+export async function generateRecommendationDrafts(
+  taste: TasteProfile,
+  history: { title: string; artist: string }[],
+  feedback: FeedbackRecord[],
+  count: number
+): Promise<RecommendationDraft[]> {
+  const text = await callGemini(buildBatchPrompt(taste, history, feedback, count), BATCH_SCHEMA, 90_000);
+  let parsed: { recommendations?: RecommendationDraft[] };
+  try {
+    parsed = JSON.parse(text) as { recommendations?: RecommendationDraft[] };
+  } catch {
+    throw new Error(`Gemini returned non-JSON: ${text.slice(0, 300)}`);
+  }
+  return Array.isArray(parsed.recommendations) ? parsed.recommendations : [];
 }

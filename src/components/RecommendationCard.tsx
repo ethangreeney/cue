@@ -50,12 +50,14 @@ export default function RecommendationCard({
   rec,
   busy,
   onFeedback,
-  onAnother
+  onAnother,
+  showFeedback = true
 }: {
   rec: Recommendation;
   busy: boolean;
-  onFeedback: (f: FeedbackPayload) => void;
-  onAnother: () => void;
+  onFeedback?: (f: FeedbackPayload) => void;
+  onAnother?: () => void;
+  showFeedback?: boolean;
 }) {
   const [selected, setSelected] = useState<FeedbackVerdict | null>(null);
   const [saved, setSaved] = useState(false);
@@ -128,14 +130,14 @@ export default function RecommendationCard({
   const handleVerdict = (v: FeedbackVerdict) => {
     if (busy) return;
     setSelected(v);
-    onFeedback({ verdict: v, note: note.trim() || undefined });
+    onFeedback?.({ verdict: v, note: note.trim() || undefined });
   };
 
   const submitNote = () => {
     if (busy || !note.trim()) return;
     recogRef.current?.stop();
     setListening(false);
-    onFeedback({ note: note.trim() });
+    onFeedback?.({ note: note.trim() });
   };
 
   const handleSave = async () => {
@@ -235,6 +237,7 @@ export default function RecommendationCard({
       </div>
 
       {/* Feedback — quiet, at the end */}
+      {showFeedback && (
       <section className="feedback">
         <div className="feedback-bar">
           <div className="fb-options">
@@ -262,9 +265,11 @@ export default function RecommendationCard({
             <NoteIcon size={17} />
             <span>In your own words</span>
           </button>
-          <button className="skip-btn" onClick={onAnother} disabled={busy} title="Move on to the next song">
-            Next <ArrowIcon size={14} />
-          </button>
+          {onAnother && (
+            <button className="skip-btn" onClick={onAnother} disabled={busy} title="Move on to the next song">
+              Next <ArrowIcon size={14} />
+            </button>
+          )}
         </div>
 
         {noteOpen && (
@@ -295,6 +300,7 @@ export default function RecommendationCard({
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }

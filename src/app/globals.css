@@ -800,16 +800,19 @@ a {
 /* ---------- Daily picks concept ---------- */
 .daily-page {
   width: min(1180px, 100%);
-  min-height: 100vh;
+  min-height: 100svh;
   margin: 0 auto;
-  padding: 48px 42px 34px;
+  padding: 44px 42px 30px;
   display: flex;
   flex-direction: column;
+  /* The day is a single, contained screen — the shelf fills the space between
+     the header and footer, and a dragged card can't open a horizontal scrollbar. */
+  overflow-x: clip;
 }
 
 .daily-header {
   text-align: center;
-  margin: 0 auto 60px;
+  margin: 0 auto 40px;
 }
 
 .daily-wordmark {
@@ -1029,6 +1032,10 @@ a {
   font-size: 15px;
   line-height: 1.45;
   font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .pick-actions {
@@ -1162,6 +1169,53 @@ a {
   cursor: pointer;
 }
 
+/* Laptop / shorter viewports: tighten the daily layout so all three picks fit
+   without the page running off the bottom. Scoped to wide-but-short screens, so
+   tall desktop monitors keep the roomier spacing. */
+@media (min-width: 801px) and (max-height: 900px) {
+  .daily-page {
+    width: min(1040px, 100%);
+    padding: 30px 42px 22px;
+  }
+
+  .daily-header {
+    margin-bottom: 30px;
+  }
+
+  .daily-wordmark {
+    margin-bottom: 14px;
+  }
+
+  .daily-header h1 {
+    font-size: clamp(26px, 2.6vw, 34px);
+  }
+
+  .daily-intro {
+    margin-top: 7px;
+    font-size: 15px;
+  }
+
+  .pick {
+    padding: 22px 26px 18px;
+  }
+
+  .pick-copy {
+    padding: 14px 2px 12px;
+  }
+
+  .pick h2 {
+    font-size: 24px;
+  }
+
+  .pick-note {
+    margin-top: 10px;
+  }
+
+  .daily-footer {
+    padding-top: 14px;
+  }
+}
+
 @media (max-width: 800px) {
   .daily-page {
     padding: 34px 22px 28px;
@@ -1216,5 +1270,476 @@ a {
 
   .pick-cover {
     width: min(100%, 330px);
+  }
+}
+
+/* ── Podium — the three picks, side by side, draggable to re-rank ────────── */
+.podium {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-top: clamp(8px, 4vh, 56px);
+  gap: clamp(20px, 3.5vh, 40px);
+}
+
+.podium-shelf {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Fixed vertical separators — independent of card order, so they never drift
+   as cards slide past each other during a drag. */
+.shelf-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--rule);
+  z-index: 2;
+  pointer-events: none;
+  transform: translateX(-0.5px);
+}
+
+/* The cover is the tallest element on the page. Keep it a true square (album
+   art is iconic that way) but bound its size to the viewport and center it in
+   the column, so the three picks always fit one screen — scaling down on short
+   laptops instead of forcing the page to scroll. */
+.podium-pick .pick-cover {
+  width: clamp(150px, 22vh, 260px);
+  margin-inline: auto;
+}
+
+/* The shelf draws its own dividers, so suppress the editorial per-card border
+   that .pick adds between DOM-adjacent siblings. */
+.podium-pick + .podium-pick {
+  border-left: 0;
+  border-top: 0;
+}
+
+/* The quiet invitation to open a song — slides in on hover/focus so the card
+   reads as calm until you reach for it. */
+.pick-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-strong);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.pick-cue svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.2s ease;
+}
+
+.podium-pick:hover .pick-cue,
+.podium-pick:focus-visible .pick-cue {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.podium-pick:hover .pick-cue svg {
+  transform: translateX(3px);
+}
+
+/* Stacked layout — cards become full-width rows. */
+@media (max-width: 800px) {
+  .podium-shelf {
+    grid-template-columns: 1fr;
+    border-bottom: 0;
+  }
+  .shelf-divider {
+    display: none;
+  }
+  .podium-pick {
+    border-bottom: 1px solid var(--rule);
+  }
+  /* On touch there's no hover, so the cue is always present. */
+  .pick-cue {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Song story — three contained columns: prose · album+player · lyrics ──── */
+/* The detail view is its own single screen, like the daily picks. The three
+   columns share a vertical midline so nothing is top-anchored and stranded. */
+.story-page {
+  max-width: 1340px;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 28px;
+  overflow: hidden;
+}
+
+.story {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) clamp(228px, 22vw, 290px) minmax(0, 1fr);
+  gap: clamp(30px, 3.6vw, 60px);
+  align-items: center;
+  padding: clamp(10px, 2.5vh, 36px) 0;
+}
+
+.story-text {
+  min-width: 0;
+}
+
+.story-title {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: clamp(34px, 4vw, var(--t-display));
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin: 8px 0 6px;
+  color: var(--ink);
+}
+
+.story-meta {
+  font-family: var(--serif);
+  font-size: var(--t-meta);
+  color: var(--muted-strong);
+  margin: 0 0 16px;
+}
+
+.story-thesis {
+  font-family: var(--serif);
+  font-size: 22px;
+  line-height: 1.34;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0 0 26px;
+  max-width: 40em;
+}
+
+/* Swipeable write-up tabs — same editorial baseline-rule treatment as .tabs. */
+.story-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 18px;
+}
+
+.story-tab {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-strong);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0 0 12px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.story-tab:hover,
+.story-tab:focus-visible {
+  outline: none;
+  color: var(--ink);
+}
+
+.story-tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+.story-body {
+  font-family: var(--serif);
+  font-size: var(--t-body);
+  line-height: 1.6;
+  color: var(--ink-soft);
+  max-width: 60ch;
+  margin: 0;
+  min-height: 7em;
+  animation: tabFade 0.3s ease;
+}
+
+.story-further {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 15px;
+  color: var(--muted-strong);
+  margin: 22px 0 0;
+  line-height: 1.5;
+}
+
+/* Keep multi-word band names ("The Drums") from breaking across lines. */
+.further-item {
+  white-space: nowrap;
+}
+
+/* ── The stage: cover + player (center column) ───────────────────────────── */
+.story-stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.story-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #d9d8cf;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 22px 44px -24px rgba(0, 0, 0, 0.45);
+}
+
+.story-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.story-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* ── Player ───────────────────────────────────────────────────────────────── */
+.player {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.player-toggle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.player-toggle:hover {
+  transform: scale(1.05);
+  background: #000;
+}
+
+.player-toggle:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.player-spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(244, 243, 238, 0.35);
+  border-top-color: var(--bg);
+  border-radius: 50%;
+  animation: playerspin 0.7s linear infinite;
+}
+
+@keyframes playerspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.player-track {
+  flex: 1;
+  min-width: 0;
+}
+
+.player-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.player-bar span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.25s linear;
+}
+
+.player-time {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-strong);
+}
+
+/* Fallback: a single calm link-out for free accounts / unsupported browsers. */
+.player-fallback {
+  cursor: pointer;
+}
+
+.player-fallback-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.player-fallback .arrow {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.player-fallback:hover .arrow {
+  transform: translateX(3px);
+}
+
+/* ── Lyrics (right column) ──────────────────────────────────────────────── */
+.story-lyrics-col {
+  min-width: 0;
+  min-height: 0;
+  align-self: center;
+  display: flex;
+}
+
+.lyrics {
+  position: relative; /* be the offsetParent for lines, so auto-scroll centering is measured against the box itself */
+  flex: 1;
+  /* Bound the lyric window so it reads as a centered block the same visual
+     mass as the cover + player, rather than stretching the full row. */
+  max-height: clamp(360px, 54vh, 500px);
+  overflow-y: auto;
+  padding: 8px 2px;
+  /* Fade the top and bottom edges so lines drift in and out rather than clip. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16%, #000 84%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 16%, #000 84%, transparent);
+  scrollbar-width: none;
+}
+
+.lyrics::-webkit-scrollbar {
+  display: none;
+}
+
+.lyrics-muted {
+  -webkit-mask-image: none;
+  mask-image: none;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 16px;
+}
+
+.lyrics-muted p {
+  margin: 0;
+  max-width: 22ch;
+}
+
+.lyrics-plain p {
+  margin: 0 0 2px;
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.62;
+  color: var(--ink-soft);
+}
+
+.lyric-line {
+  margin: 0 0 12px;
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+  transition: color 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
+}
+
+.lyric-line.past {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.lyric-line.active {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* When paused we still show the lyrics, just without the "live" emphasis. */
+.lyrics-synced.lyrics .lyric-line.active.paused {
+  color: var(--ink-soft);
+}
+
+/* Tablet: drop the album column between prose and lyrics into a two-up, then
+   let the page scroll — a contained three-up needs the width. */
+@media (max-width: 1080px) {
+  .story-page {
+    min-height: 0;
+    overflow: visible;
+  }
+  .story {
+    grid-template-columns: 1fr minmax(300px, 360px);
+    align-items: start;
+    gap: clamp(28px, 4vw, 48px);
+  }
+  .story-stage {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+  .story-lyrics-col {
+    grid-column: 2;
+    align-self: start;
+  }
+  .lyrics {
+    max-height: 360px;
+  }
+}
+
+@media (max-width: 720px) {
+  .story {
+    grid-template-columns: 1fr;
+  }
+  .story-stage {
+    grid-column: 1;
+    order: -1;
+    max-width: 380px;
+  }
+  .story-lyrics-col {
+    grid-column: 1;
+  }
+  .story-body {
+    min-height: 0;
   }
 }
