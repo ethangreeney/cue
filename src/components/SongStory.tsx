@@ -2,8 +2,9 @@
 
 import React, { useState } from "react";
 import { Recommendation } from "@/lib/types";
-import Player from "./Player";
+import Player, { PlaybackVolume } from "./Player";
 import Lyrics from "./Lyrics";
+import MetadataVisualizer from "./MetadataVisualizer";
 
 // The song's detail view: the prose lives on the left as a set of swipeable
 // write-ups; the cover, in-page player, and synced lyrics sit on the right.
@@ -133,6 +134,16 @@ export default function SongStory({ rec }: { rec: Recommendation }) {
           positionSec={posSec}
           playing={playing}
         />
+        <div className="story-audio-extras">
+          <MetadataVisualizer
+            title={rec.title}
+            artist={rec.artist}
+            durationMs={sp?.durationMs}
+            positionSec={posSec}
+            playing={playing}
+          />
+          <PlaybackVolume />
+        </div>
       </div>
     </div>
   );

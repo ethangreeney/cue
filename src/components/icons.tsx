@@ -87,6 +87,13 @@ export const MicIcon = ({ size = 18, className }: P) => (
   </svg>
 );
 
+export const VolumeIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M5 10v4h3l4 4V6L8 10H5z" />
+    <path d="M15 9a4 4 0 0 1 0 6M17.5 6.5a8 8 0 0 1 0 11" />
+  </svg>
+);
+
 // Feedback glyphs
 export const HeartIcon = ({ size = 22, className }: P) => (
   <svg {...base(size)} className={className}>

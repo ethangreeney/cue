@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { PlayIcon, PauseIcon, SpotifyIcon, ArrowIcon } from "./icons";
+import { PlayIcon, PauseIcon, SpotifyIcon, ArrowIcon, VolumeIcon } from "./icons";
 import { reportClientIssue } from "@/lib/clientLog";
 
 // The Spotify Web Playback SDK turns this browser tab into a Spotify "device"
@@ -93,6 +93,7 @@ interface SdkPlayer {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   seek: (positionMs: number) => Promise<void>;
+  setVolume: (volume: number) => Promise<void>;
   addListener: (event: string, cb: (payload: unknown) => void) => void;
 }
 
@@ -116,6 +117,23 @@ interface Shared {
 }
 let shared: Shared | null = null;
 let sharedPromise: Promise<Shared | null> | null = null;
+let desiredVolume = 0.85;
+let volumeLoaded = false;
+
+function loadVolume(): number {
+  if (volumeLoaded || typeof window === "undefined") return desiredVolume;
+  volumeLoaded = true;
+  const raw = window.localStorage.getItem("cue-volume");
+  const stored = raw === null ? NaN : Number(raw);
+  if (Number.isFinite(stored) && stored >= 0 && stored <= 1) desiredVolume = stored;
+  return desiredVolume;
+}
+
+function applyVolume(volume: number) {
+  desiredVolume = Math.min(1, Math.max(0, volume));
+  if (typeof window !== "undefined") window.localStorage.setItem("cue-volume", String(desiredVolume));
+  shared?.player.setVolume(desiredVolume).catch(() => {});
+}
 // Latched when the SDK reports a non-recoverable condition for this token — a
 // missing "streaming" scope (the user authorized before it was added), a non-
 // streamable account, or a DRM/init failure. Retrying can't fix any of these;
@@ -157,7 +175,7 @@ async function buildPlayer(): Promise<Shared | null> {
       const t = await freshToken();
       cb(t?.accessToken ?? "");
     },
-    volume: 0.85
+    volume: loadVolume()
   });
   const s: Shared = { player, deviceId: null };
   shared = s;
@@ -205,6 +223,36 @@ async function buildPlayer(): Promise<Shared | null> {
     return null;
   }
   return s;
+}
+
+export function PlaybackVolume() {
+  const [volume, setVolume] = useState(0.85);
+
+  useEffect(() => {
+    setVolume(loadVolume());
+  }, []);
+
+  const update = (next: number) => {
+    setVolume(next);
+    applyVolume(next);
+  };
+
+  return (
+    <div className="playback-volume">
+      <VolumeIcon size={16} className="playback-volume-icon" />
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        value={volume}
+        onChange={(event) => update(Number(event.target.value))}
+        aria-label="Playback volume"
+        style={{ "--volume": `${volume * 100}%` } as React.CSSProperties}
+      />
+      <span>{Math.round(volume * 100)}</span>
+    </div>
+  );
 }
 
 // "fallback" → in-page play can't work for this user/token (link out);
