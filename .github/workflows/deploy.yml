@@ -23,6 +23,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Worker type defs (KVNamespace, env bindings) are generated from
+      # wrangler.jsonc and gitignored, so regenerate them before typechecking.
+      - run: npm run cf:typegen
       # cf:deploy does NOT rebuild, so build first, then ship the output.
       - run: npm run cf:build
       - run: npm run cf:deploy
