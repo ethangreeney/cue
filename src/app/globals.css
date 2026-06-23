@@ -893,8 +893,12 @@ a {
 
 .pick:hover {
   z-index: 2;
-  transform: scale(1.012);
-  box-shadow: 0 18px 42px -30px rgba(27, 27, 25, 0.55);
+  transform: scale(1.014);
+  /* Three layers so the lift reads evenly all the way around — a crisp hairline
+     edge and a soft ambient halo define the top (which the old bottom-only drop
+     shadow let melt into the page), while the deep shadow still grounds it. */
+  box-shadow: 0 0 0 1px rgba(27, 27, 25, 0.06), 0 2px 10px rgba(27, 27, 25, 0.07),
+    0 24px 46px -28px rgba(27, 27, 25, 0.5);
 }
 
 .pick-cover::before,
@@ -1000,6 +1004,19 @@ a {
 
 .pick-copy {
   padding: 22px 2px 20px;
+}
+
+/* The spectrum label — "Very you", "A bit further", "Left field". Sits above
+   the title as a quiet section tag so the three read as a deliberate range. */
+.pick-lane {
+  display: block;
+  margin: 0 0 10px;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--muted-strong);
 }
 
 .pick-number {
@@ -1382,7 +1399,10 @@ a {
    columns share a vertical midline so nothing is top-anchored and stranded. */
 .story-page {
   max-width: 1500px;
-  min-height: 100svh;
+  /* Fixed to the viewport — NOT min-height — so the frame can never grow past
+     the screen and hand the scroll to the page. The prose column self-scrolls
+     within the band instead (see .story-text). */
+  height: 100svh;
   display: flex;
   flex-direction: column;
   padding-bottom: 28px;
@@ -1396,6 +1416,9 @@ a {
   /* Center column is height-driven so the album art grows to match the prose
      and lyrics columns on tall displays, keeping the three a balanced band. */
   grid-template-columns: minmax(0, 380px) clamp(320px, 52vh, 500px) minmax(0, 380px);
+  /* One full-height row so the left column can scroll within the band instead
+     of overflowing the contained page. */
+  grid-template-rows: minmax(0, 1fr);
   gap: clamp(36px, 3.4vw, 64px);
   /* Cap the side columns and center the band so the prose sits inset from the
      left edge rather than hugging it — that inset roughly matches the trailing
@@ -1408,6 +1431,14 @@ a {
 
 .story-text {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Bound the column to a band of similar visual mass to the cover and lyrics
+     so the three columns read as a balanced row rather than one tall column.
+     The header (eyebrow → thesis) stays put; only the prose body scrolls
+     (see .story-prose). min(100%, …) keeps it inside the row on short screens. */
+  max-height: min(100%, clamp(380px, 58vh, 600px));
 }
 
 .story-title {
@@ -1437,49 +1468,39 @@ a {
   max-width: 40em;
 }
 
-/* Swipeable write-up tabs — same editorial baseline-rule treatment as .tabs. */
-.story-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-  border-bottom: 1px solid var(--rule);
-  margin-bottom: 18px;
+/* One continuous write-up, replacing the old per-section tabs. This is the only
+   part of the left column that scrolls — the header above it stays pinned. */
+.story-prose {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--rule);
+  padding-top: 20px;
+  padding-right: 14px;
+  max-width: 60ch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
 }
 
-.story-tab {
-  font-family: var(--sans);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted-strong);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 0 0 12px;
-  margin-bottom: -1px;
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
+.story-prose::-webkit-scrollbar {
+  width: 6px;
 }
 
-.story-tab:hover,
-.story-tab:focus-visible {
-  outline: none;
-  color: var(--ink);
+.story-prose::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 3px;
 }
 
-.story-tab.active {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
-}
-
-.story-body {
+.story-prose p {
   font-family: var(--serif);
   font-size: var(--t-body);
-  line-height: 1.6;
+  line-height: 1.62;
   color: var(--ink-soft);
-  max-width: 60ch;
   margin: 0;
-  min-height: 7em;
-  animation: tabFade 0.3s ease;
+}
+
+.story-prose p + p {
+  margin-top: 1.05em;
 }
 
 .story-further {
@@ -1851,13 +1872,26 @@ a {
    let the page scroll — a contained three-up needs the width. */
 @media (max-width: 1080px) {
   .story-page {
+    height: auto;
     min-height: 0;
     overflow: visible;
   }
   .story {
     grid-template-columns: 1fr minmax(300px, 360px);
+    grid-template-rows: auto;
     align-items: start;
     gap: clamp(28px, 4vw, 48px);
+  }
+  /* The page scrolls here, so the left column flows instead of self-scrolling. */
+  .story-text {
+    max-height: none;
+    overflow: visible;
+  }
+  .story-prose {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+    padding-right: 0;
   }
   .story-stage {
     grid-column: 2;
@@ -1884,8 +1918,5 @@ a {
   .story-lyrics-col {
     grid-column: 1;
     max-width: 380px;
-  }
-  .story-body {
-    min-height: 0;
   }
 }

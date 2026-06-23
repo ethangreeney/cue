@@ -8,6 +8,19 @@ export type FeedbackVerdict =
   | "boring"
   | "not_for_me";
 
+// Where a daily pick sits relative to the listener's established taste. The
+// three are shown in this order so the set reads as a spectrum: trust first,
+// then a step out, then a real departure.
+export type Lane = "core" | "stretch" | "outer";
+
+export const LANE_ORDER: Lane[] = ["core", "stretch", "outer"];
+
+export const LANE_LABEL: Record<Lane, string> = {
+  core: "Very you",
+  stretch: "A bit further",
+  outer: "Left field"
+};
+
 export interface SpotifyArtistLite {
   id: string;
   name: string;
@@ -41,13 +54,18 @@ export interface RecommendationDraft {
   year: string;
   genres: string[];
   thesis: string;
-  whyForYou: string;
-  whatToListenFor: string;
-  aboutSong: string;
-  aboutArtist: string;
-  context: string;
+  // One cohesive, tight narrative shown on the song page (3-4 short paragraphs).
+  story: string;
   furtherExploration: string[];
   spotifySearchQuery: string;
+  lane?: Lane; // set on daily picks; absent on the single on-demand pick
+  // Legacy per-section fields — kept optional so picks cached before the
+  // single-narrative change still render (the song view stitches them).
+  whyForYou?: string;
+  whatToListenFor?: string;
+  aboutSong?: string;
+  aboutArtist?: string;
+  context?: string;
 }
 
 // Real Spotify metadata used to ground a draft.

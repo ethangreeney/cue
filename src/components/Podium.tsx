@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Recommendation } from "@/lib/types";
+import { LANE_LABEL, LANE_ORDER, Recommendation } from "@/lib/types";
 import { ArrowIcon } from "./icons";
 
 const COVER_CLASS = ["cover-dawn", "cover-signal", "cover-night"];
@@ -45,6 +45,7 @@ export default function Podium({
               ) : null}
             </div>
             <div className="pick-copy">
+              <span className="pick-lane">{LANE_LABEL[rec.lane ?? LANE_ORDER[i]]}</span>
               <h2>{rec.title}</h2>
               <p className="pick-artist">{rec.artist}</p>
               <p className="pick-note">{rec.thesis}</p>

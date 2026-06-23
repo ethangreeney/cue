@@ -1,4 +1,15 @@
-import { FeedbackRecord, RecommendationDraft, TasteProfile } from "./types";
+import { FeedbackRecord, Lane, RecommendationDraft, TasteProfile } from "./types";
+
+// How each lane should feel. The set is ordered trust → step out → departure.
+// Every lane is DISCOVERY — even "core" must be something new to this listener,
+// never one of their established favorites.
+const LANE_BRIEF: Record<Lane, string> = {
+  core: 'lane "core" (VERY YOU): the closest possible match that is STILL a discovery — a song that sits dead-center in their world and makes them think "this gets me," but that they almost certainly have NOT heard yet. A deep cut, an overlooked track, or a close adjacent artist. Never one of their established favorites, and never the signature/most-famous song of an artist already in their rotation.',
+  stretch:
+    'lane "stretch" (A BIT FURTHER): takes the core of their taste and broadens it one honest step — a neighboring sound, scene, or era they probably don\'t know yet but whose DNA they\'ll recognize. Discovery, not a reach too far.',
+  outer:
+    'lane "outer" (LEFT FIELD): a genuine departure outside their usual lanes — a bolder swing that could surprise them. Still chosen with taste (a real bridge from something they like), but clearly the wildcard.'
+};
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -22,20 +33,10 @@ const RECOMMENDATION_PROPERTIES = {
       type: "STRING",
       description: "One vivid sentence: why this song, for this person, today."
     },
-    whyForYou: {
+    story: {
       type: "STRING",
       description:
-        "2-3 sentences connecting the song to THIS listener's specific taste, naming patterns in their artists/genres."
-    },
-    whatToListenFor: {
-      type: "STRING",
-      description: "2-3 sentences pointing to specific moments or details to notice."
-    },
-    aboutSong: { type: "STRING", description: "2-3 sentences on the song itself." },
-    aboutArtist: { type: "STRING", description: "2-3 sentences on the artist." },
-    context: {
-      type: "STRING",
-      description: "2-3 sentences of album/scene/cultural context."
+        "A single flowing write-up of 3-4 SHORT paragraphs, separated by a blank line. High signal-to-noise — every sentence earns its place; no filler. Weave together, WITHOUT headers or labels: why this fits THIS listener's specific taste (name real patterns in their artists/genres), what to actually listen for, and the essential context on the song, artist, and scene. Open by connecting to the listener. Do NOT restate the thesis verbatim. Calm, specific, editorial prose — no hype."
     },
     furtherExploration: {
       type: "ARRAY",
@@ -55,11 +56,7 @@ const RECOMMENDATION_FIELDS = [
   "year",
   "genres",
   "thesis",
-  "whyForYou",
-  "whatToListenFor",
-  "aboutSong",
-  "aboutArtist",
-  "context",
+  "story",
   "furtherExploration",
   "spotifySearchQuery"
 ];
@@ -74,13 +71,30 @@ const RECOMMENDATION_ITEM = {
 // Single pick — used by the on-demand /api/recommend path.
 const RESPONSE_SCHEMA = RECOMMENDATION_ITEM;
 
+// Batch items carry a "lane" so each pick's place on the spectrum is intrinsic
+// to the data, not just its array position — grounding can drop/reorder picks
+// without scrambling which one is "Very you" vs "Left field".
+const BATCH_ITEM = {
+  type: "OBJECT",
+  properties: {
+    ...RECOMMENDATION_PROPERTIES,
+    lane: {
+      type: "STRING",
+      enum: ["core", "stretch", "outer"],
+      description: "Which spectrum lane this pick fills."
+    }
+  },
+  required: [...RECOMMENDATION_FIELDS, "lane"],
+  propertyOrdering: [...RECOMMENDATION_FIELDS, "lane"]
+};
+
 // A whole day's worth at once — one round-trip that returns several DISTINCT
 // picks. Far cheaper and more diverse than firing N near-identical prompts in
 // parallel (which collapse onto the same canonical songs).
 const BATCH_SCHEMA = {
   type: "OBJECT",
   properties: {
-    recommendations: { type: "ARRAY", items: RECOMMENDATION_ITEM }
+    recommendations: { type: "ARRAY", items: BATCH_ITEM }
   },
   required: ["recommendations"]
 };
@@ -133,6 +147,9 @@ function buildPrompt(
   return `You are the music curator behind "Cue" — a service that picks ONE deeply chosen song for a listener and explains why it matters. You write like a sharp, literate liner-note essayist: specific, calm, never hype, never generic.
 
 # THE LISTENER
+The tracks and artists below are music this person ALREADY KNOWS. They are
+EVIDENCE of taste — a map of what they love — NOT a menu to pick from. Read them
+to understand the listener, then point somewhere new.
 Name: ${taste.displayName}
 Taste summary: ${taste.summary}
 Top genres: ${taste.topGenres.join(", ") || "unknown"}
@@ -141,6 +158,16 @@ Top tracks: ${taste.topTracks.map((t) => `${t.name} (${t.artist})`).join("; ") |
 Recently saved: ${taste.recentSaves.map((t) => `${t.name} (${t.artist})`).join("; ") || "unknown"}
 Currently in rotation (recently played): ${taste.recentlyPlayed.map((t) => `${t.name} (${t.artist})`).join("; ") || "unknown"}
 From their own playlists: ${taste.playlistPicks.map((t) => `${t.name} (${t.artist})`).join("; ") || "unknown"}
+
+# THE MANDATE: DISCOVERY ONLY
+Cue exists to show people songs they DON'T already know. A pick the listener has
+already heard is a failure, no matter how well it fits. Therefore:
+- NEVER recommend any song listed above (top tracks, saved, in rotation, playlists).
+- NEVER recommend the obvious signature hit of an artist already in their top
+  artists — if they love an artist, they've already heard that song.
+- Favor deep cuts, overlooked tracks, and adjacent artists they likely haven't
+  reached yet. The bar is: "they probably have NOT heard this, but the moment it
+  plays they'll feel it was made for them."
 
 # FEEDBACK ON PAST PICKS (most recent last) — let this steer this pick
 ${steeringFromFeedback(feedback)}
@@ -154,7 +181,8 @@ Choose exactly ONE real, existing song to recommend right now.
 Rules:
 - It MUST be a real song that is actually available to stream on Spotify right now. Use the exact artist and title as they appear on Spotify. Do not invent songs, and avoid tracks likely to be missing from Spotify (out-of-print, unofficial, region-locked, or obscure-label rarities that never made it to streaming).
 - Choose something genuinely good and well-matched — not the most obvious mainstream hit, but not willfully obscure either, unless feedback tells you to adjust.
-- The "whyForYou" must reference SPECIFIC things about this listener's taste (their actual artists/genres), not vague flattery.
+- It MUST be new to THIS listener: not in their top tracks, saves, rotation, or playlists above, and not the signature song of an artist they already play. Discovery is the whole point.
+- The "story" must reference SPECIFIC things about this listener's taste (their actual artists/genres), not vague flattery.
 - Do not invent biographical or factual claims you are unsure of. If unsure about a backstory detail, keep it general rather than fabricating specifics.
 - No numeric scores. No "as an AI" language. No emoji. No exclamation-mark hype.
 - Keep every field tight and editorial. Prose, not bullet points.
@@ -167,17 +195,20 @@ function buildBatchPrompt(
   taste: TasteProfile,
   history: { title: string; artist: string }[],
   feedback: FeedbackRecord[],
-  count: number
+  lanes: Lane[]
 ): string {
   const single = buildPrompt(taste, history, feedback);
   // Reuse the whole single-pick brief (listener, feedback, exclusions, rules)
-  // and just swap the task for "give me several DISTINCT picks at once".
+  // and just swap the task for "give me one pick per spectrum lane, in order".
+  const laneSpec = lanes.map((l, i) => `${i + 1}. ${LANE_BRIEF[l]}`).join("\n");
   const task = `# YOUR TASK
-Choose exactly ${count} real, existing songs to recommend right now — a set, not one.
+Choose exactly ${lanes.length} real, existing songs — ONE for each lane below, IN THIS ORDER. The lanes are increasing distances from this listener's established taste:
 
-The set MUST be internally diverse:
+${laneSpec}
+
+This is a deliberate spectrum, not a grab-bag: "core" must feel unmistakably like them, and "outer" must be a real departure — the gap between them should be obvious.
+- Set each pick's "lane" field to its lane id ("core" | "stretch" | "outer").
 - Every pick a DIFFERENT artist. Never the same artist twice.
-- Span different corners of this listener's taste (different moods, eras, or genres they actually like) — not ${count} variations on one sound.
 - None of them may appear in the ALREADY RECOMMENDED list above.`;
 
   const body = single.slice(0, single.indexOf("# YOUR TASK")) + task;
@@ -185,13 +216,14 @@ The set MUST be internally diverse:
 
 Rules:
 - Each MUST be a real song actually streamable on Spotify right now. Use the exact artist and title as they appear on Spotify. Do not invent songs, and avoid tracks likely to be missing from Spotify (out-of-print, unofficial, region-locked, obscure-label rarities).
-- Genuinely good, well-matched picks — not the most obvious mainstream hits, but not willfully obscure either, unless feedback says otherwise.
-- Each "whyForYou" must reference SPECIFIC things about this listener's taste, not vague flattery.
+- Genuinely good, well-matched picks for their lane — not the most obvious mainstream hits, but not willfully obscure either, unless feedback says otherwise.
+- Every pick MUST be new to THIS listener: none from their top tracks, saves, rotation, or playlists above, and never the signature song of an artist they already play. Even "core" is a discovery. This is the whole point.
+- Each "story" must reference SPECIFIC things about this listener's taste, not vague flattery.
 - Do not invent biographical or factual claims you are unsure of.
 - No numeric scores. No "as an AI" language. No emoji. No exclamation-mark hype.
 - Keep every field tight and editorial. Prose, not bullet points.
 
-Return ONLY the structured JSON object with a "recommendations" array of exactly ${count} items.`;
+Return ONLY the structured JSON object with a "recommendations" array of exactly ${lanes.length} items, one per lane in the given order.`;
 }
 
 interface GeminiResponse {
@@ -254,14 +286,15 @@ export async function generateRecommendationDraft(
   }
 }
 
-// Several distinct picks in a single call — the workhorse for the daily podium.
+// One pick per requested lane in a single call — the workhorse for the daily
+// podium. Each returned draft carries its lane so order survives grounding.
 export async function generateRecommendationDrafts(
   taste: TasteProfile,
   history: { title: string; artist: string }[],
   feedback: FeedbackRecord[],
-  count: number
+  lanes: Lane[]
 ): Promise<RecommendationDraft[]> {
-  const text = await callGemini(buildBatchPrompt(taste, history, feedback, count), BATCH_SCHEMA, 90_000);
+  const text = await callGemini(buildBatchPrompt(taste, history, feedback, lanes), BATCH_SCHEMA, 90_000);
   let parsed: { recommendations?: RecommendationDraft[] };
   try {
     parsed = JSON.parse(text) as { recommendations?: RecommendationDraft[] };
